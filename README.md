@@ -1,17 +1,25 @@
 # EventHub
 
-ITGN130 Programming in Python group project. The scaffold contains design
-documentation and development quality infrastructure. Application features are
-not implemented, and no final submission artifacts have been generated.
+ITGN130 Programming in Python group project: a menu-driven event registration and
+booking system. This repository currently contains design documentation, placeholder
+Python modules, and development quality infrastructure. Application features and
+acceptance tests are not implemented. Running python main.py currently does nothing.
 
-## Constraints
+## Authority and design status
 
-Python 3.10+, standard library application code, functions, and PEP 8.
-Development checks use pytest and Ruff; they are not application dependencies.
+The official “ITGN130 Group Project Fall 2026 27 EventHub.docx” was reconciled in
+Milestone 2.1. Mandatory requirements and source references are in
+[requirements](docs/requirements.md). Approved policies through Milestone 2.3 are in
+[business rules](docs/business_rules.md), including the approved single-file
+persistence contract. Documentation approval does not implement application code.
+No final report, slides, sample JSON files, or submission ZIP are produced here.
 
-## Setup
+The document filename suggests Fall 2026–27 but its internal heading says Academic
+Year 2025–26. Verify this and all deadlines with the instructor/Moodle.
 
-From the repository root, using Python 3.10 or newer:
+## Development setup
+
+Use Python 3.10 or newer from the repository root:
 
 ```sh
 python3 -m venv .venv
@@ -19,11 +27,11 @@ source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 ```
 
-On Windows, activate with `.venv\Scripts\activate` instead.
+On Windows, activate with .venv\Scripts\activate instead. Application runtime
+will use the standard library; pytest and Ruff are development tools, not required
+application libraries. No framework, database, or GUI is planned.
 
-## Testing and code quality
-
-Run the same checks as CI from the repository root:
+Run the existing development checks from the repository root:
 
 ```sh
 python -m ruff check .
@@ -31,40 +39,55 @@ python -m ruff format --check .
 python -m pytest
 ```
 
-To apply formatting locally:
+CI uses Python 3.10 and these commands. Ruff targets Python 3.10, 88-character
+formatting, and E4/E7/E9/F rules. tests/test_imports.py contains four parameterized
+module import/path checks only. Business and integration tests in the requirements
+mapping are PLANNED. No test results are claimed by this documentation revision.
 
-```sh
-python -m ruff format .
-```
+## Approved intended behavior
 
-Ruff targets Python 3.10, uses 88-character formatting, and enables lint rules
-E4, E7, E9, and F. pytest discovers tests under `tests/`. CI runs on pushes and
-pull requests using Python 3.10 and installs the bounded development dependencies
-from `requirements-dev.txt`.
+- Events have unique ID, title, date, venue, positive capacity, active/cancelled
+  status, and FIFO queue. Cancellation retains the event and removes its bookings;
+  editing cancelled events, reactivation, and permanent deletion are prohibited
+  in the initial scope by approved project policy.
+- Register with trimmed case-sensitive student ID and name; preserve leading
+  zeros. Prevent same-event duplicates across confirmed and waiting registrations.
+- Enforce capacity; promote FIFO after confirmed cancellation or capacity increase;
+  reject reductions below confirmed attendance and never demote.
+- Validate exact YYYY-MM-DD dates, including calendar validity; permit past dates.
+- Search title/venue keywords or exact dates; display status and confirmed/waiting
+  counts, including cancelled events, ordered by date then event ID.
+- Report retained events, active confirmed registrations and available seats, and
+  all tied leaders by confirmed registrations; also show waiting and status totals.
 
-The infrastructure test imports each placeholder module and verifies its source
-path. Passing it does not establish application feature coverage.
+## Layout and persistence plan
 
-## Project layout
+- main.py: repeating menu, input/output, orchestration and errors.
+- events.py: event creation, validation, updates, cancellation and searches.
+- bookings.py: student registration, capacity/FIFO, cancellation, promotion, reports.
+- storage.py: JSON validation, load/save, and controlled storage errors.
+- [Architecture](docs/architecture.md): planned public contracts and mutation ownership.
+- [Data model](docs/data_model.md): fields, invariants, and the authoritative JSON snapshot.
+- [Submission checklist](docs/submission_checklist.md): delivery/evidence requirements.
+- pyproject.toml and .github/workflows/ci.yml: existing pytest/Ruff and CI settings.
 
-- `main.py`: planned command-line interaction and startup orchestration.
-- `events.py`: planned event management and searching.
-- `bookings.py`: planned registration, queues, cancellation, and reports.
-- `storage.py`: planned JSON loading and saving.
-- `docs/requirements.md`: mandatory scope and requirement-to-test traceability.
-- `docs/architecture.md`: proposed responsibilities and function interfaces.
-- `docs/data_model.md`: proposed in-memory and persisted structures.
-- `docs/business_rules.md`: invariants, workflows, and unresolved questions.
-- `tests/`: infrastructure tests; application tests remain planned.
-- `pyproject.toml`: Ruff and pytest configuration.
-- `.github/workflows/ci.yml`: automated quality checks.
+The authoritative runtime file is data/eventhub.json, relative to the application
+root. It contains schema_version, events, and bookings; waiting-list order stays
+inside each event. Missing file on first run initializes empty state; malformed,
+unreadable, or incompatible data produces a controlled error without overwriting.
+Leftover temporary artifacts require review if the authoritative file is absent.
 
-## Design status
+Save validates the candidate and a temporary sibling readback before os.replace.
+Successful replacement commits; only then is candidate adopted. Pre-commit failure
+keeps the previous file unchanged. Post-commit cleanup errors are separate warnings,
+not failed saves. A crash after replacement can commit without a success message.
+No automatic backup system is required, and universal power-failure durability is
+not promised. The application assumes one writer on a local filesystem.
 
-The application modules contain docstrings only; running `python main.py`
-currently does nothing. Review the open questions in `docs/business_rules.md`
-before implementing features. The design documents retain their original
-unittest proposal; this development setup adopts pytest as requested. No
-application acceptance tests have been implemented yet. Verify the documented
-requirements against the official assignment sheet if further instructions
-become available.
+Runtime data paths are ignored; original nonsensitive sample eventhub.json must
+later be included explicitly in the submission. The assignment's suggested starter
+file layout is not exclusive; Milestone 2.3 approves the single authoritative file.
+
+Final application run instructions and clean-computer validation must be completed
+when the application exists. Follow the submission checklist; current import tests
+are not evidence of assignment completion.
