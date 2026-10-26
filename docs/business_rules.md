@@ -1,56 +1,134 @@
-# Business rules and open questions
+# EventHub business rules
 
-## Mandatory assignment rules
+## Authority and status
 
-- Event CRUD and searching must be available (REQ-01–05).
-- Register participants and prevent duplicates (REQ-06–07).
-- Enforce capacity; overflow joins a FIFO waiting list (REQ-08–09).
-- Support booking cancellation and automatic promotion (REQ-10–11).
-- Provide summary reports, JSON persistence, startup loading, validation, and
-  error handling (REQ-12–16).
+Assignment mandates are identified in requirements.md using official paragraph
+references. The business policies below, including single-file storage, are approved through
+Milestone 2.3. They are design contracts, not
+claims of implemented behavior. The existing four-module structure is retained.
 
-## Proposed operational rules
+## Approved event and registration policies
 
-These are reviewable decisions, not claims about unspecified assignment details.
+1. Events contain event_id, title, date, venue, capacity, status, waiting_list.
+   Create active; permit active -> cancelled. Retain cancelled event records.
+   Cancellation removes every associated booking and clears the queue in one
+   logical candidate-state operation. Do not promote during event cancellation.
+   Repeated cancellation is a clear no-op. No reactivation or permanent deletion
+   in the initial scope. Editing cancelled events is explicitly prohibited in the
+   initial version: this is an approved project policy, not an assignment mandate.
+2. Registrations contain booking_id, event_id, student_id, student_name, status.
+   Trim student IDs, preserve leading zeros, use case-sensitive comparison, and
+   impose no arbitrary length restriction. Names are display attributes. Reject
+   same-event duplicate IDs across confirmed and waiting statuses before mutation.
+   Different events and re-registration after cancellation are allowed.
+3. Capacity is a positive integer, excluding bool. Confirm only when space exists;
+   otherwise append to FIFO. Reject reductions below confirmed attendance and do
+   not demote. On increase, fill all vacancies from the queue in order. An active
+   event cannot retain a queue while seats are available after a successful action.
+4. Confirmed-registration cancellation removes the booking and promotes the queue
+   head if present. Waiting-registration cancellation removes only that entry,
+   preserving relative order. Missing IDs produce clear errors. Cancelled events
+   prohibit registrations and promotions and retain no current bookings.
+5. All dates use exact YYYY-MM-DD and real calendar validation. Permit past dates.
+   Use the same rule for creation, edits, date search, and stored data.
+6. Trim required title, venue, and student_name strings; reject empty values.
+   Validate complete changes before mutation. Never modify immutable IDs through
+   event editing. Event status changes use cancellation, not arbitrary field edits.
 
-1. Trim names, titles, locations and email. Require nonempty text. Use stripped,
-   case-folded email as the per-event duplicate key across confirmed and waiting
-   bookings. Basic email shape validation is proposed; no external verification.
-2. Register into confirmed bookings if a seat is free; otherwise append the new
-   booking ID to the tail of the event waiting list. Reject a duplicate without
-   changing any state. Apply this consistently after loading persisted data.
-3. Cancelling a confirmed booking removes it and promotes the queue head to
-   confirmed in the same operation. Cancelling a waiting booking removes its ID
-   while preserving remaining order and promotes nobody. Missing/already removed
-   bookings produce a clear error. An empty queue requires no promotion.
-4. Search title/location with case-insensitive substrings; a blank query lists
-   all events. Reports count current confirmed and waiting bookings separately.
-5. Validate before mutation. Reject unknown event/booking IDs, unknown update
-   fields, blank required fields, and invalid types. Main catches expected input
-   and storage errors and shows actionable messages without raw tracebacks.
-6. Capacity increases should fill newly available seats from the queue in FIFO
-   order; this is proposed beyond the explicit cancellation promotion requirement.
-   Route capacity edits through an orchestrated operation so events.py does not
-   import bookings.py. Exact edit interface can be refined after review.
+## Approved search and report policies
 
-## Unresolved questions — review before implementation
+Provide separate keyword and date choices. Trim/case-fold keywords and match title
+or venue substrings. Blank keyword lists all events. Date search uses a validated
+exact date; invalid or blank dates produce an error. Include cancelled events with
+clear status. Rows show event ID, title, date, venue, capacity, status, confirmed
+count, waiting count; sort by date then event ID.
 
-| ID | Question | Proposed default for review | Affected requirements/tests |
-| --- | --- | --- | --- |
-| Q01 | Does event cancellation mean deletion or a retained cancelled status? What happens to associated bookings and the waiting list? | Delete event and associated bookings together; no notifications or history. Confirm this before defining acceptance behavior. | REQ-04, REQ-10; T04, T10, T13 |
-| Q02 | May capacity be reduced below confirmed attendance? Is zero capacity valid? | Require positive capacity; reject reductions below confirmed count; do not demote participants. On increase, promote FIFO into free seats. | REQ-03, REQ-08–11; T03, T08, T09, T11 |
-| Q03 | Are past events allowed? Is a time/timezone required? Can a booked event be moved into the past? | Parse a real calendar date with datetime.date.fromisoformat and require canonical YYYY-MM-DD. Provisionally allow past dates until assignment policy is confirmed. | REQ-01, REQ-03, REQ-15; T01, T03, T15 |
-| Q04 | What should happen for missing, unreadable, corrupt, or unsupported storage, and for failed writes? Is retry/backup recovery required? | Missing file starts empty; other load failures stop safely with a message, preserving the file. Failed save keeps prior active state and disk snapshot; show error and allow retry. Confirm recovery workflow. | REQ-13–16; T13–16 |
-| Q05 | Which participant fields define duplicates, and how much email validation is required? | Name/email fields; normalized email unique per event across both statuses. | REQ-06–07, REQ-15; T06–07, T15 |
-| Q06 | What exact report fields and search filters are assessed? Are cancelled/history statistics required? | Current per-event counts and totals; title/location substring search, no history. | REQ-05, REQ-12; T05, T12 |
+Reports count all retained events; sum confirmed registrations and available seats
+across active events. Seats equal capacity minus confirmed count, without hiding
+invalid state by clamping. Most registrations means most confirmed registrations;
+show every tied active leader sorted by date then event ID. With no confirmed
+registrations, display that fact and no arbitrary leader. Also report waiting
+registrations and active/cancelled counts. Derive values from authoritative records;
+cancelled events contribute zero registrations and available seats.
 
-## Planned boundary and failure scenarios
+## Approved single-file persistence contract
 
-In addition to requirements.md: capacity one with several waiting entries;
-cancel a middle waiting entry then the confirmed participant; verify original
-FIFO order; duplicate email with whitespace/case changes; same participant on
-different events; invalid update leaves queues unchanged; round trip after
-promotion; malformed JSON and valid JSON with broken references/duplicate queue
-IDs; simulated permission/write failure; empty data and unknown IDs. Test Q01–Q06
-outcomes after policy review, including capacity reduction and calendar edge
-cases such as invalid days and leap years.
+The authoritative file is data/eventhub.json, resolved relative to the application
+root, containing exactly schema_version, events, and bookings. Queues are stored
+inside events. Assignment P69 requires JSON persistence and P70 requires safe error
+handling. The starter's events.json/bookings.json layout is suggested, not exclusive;
+this approved single-file decision supersedes the previous two-file proposal.
+
+### Startup
+
+- Missing eventhub.json on first run initializes schema_version: 1 with empty
+  events and bookings dictionaries. Explain initialization; do not write until a
+  successful mutation. Missing parent directory is created only when saving.
+- Parse existing UTF-8 JSON with duplicate-key rejection at every object level,
+  then validate the complete schema and domain invariants before returning state.
+- Malformed JSON/encoding, unexpected fields, invalid records, unsupported schema,
+  or unreadable files cause a clear controlled error and stop normal startup.
+  Do not turn these errors into empty state or silently overwrite damaged data.
+- A leftover temporary file is never authoritative and is never automatically
+  loaded or promoted. If the authoritative file is absent but temporary artifacts
+  suggest interruption, explain that absence and require explicit review before
+  treating it as a new dataset. Do not silently discard possible unsaved data.
+
+### Save sequence and commit point
+
+1. Validate the entire candidate before any authoritative-file change. Main owns
+   the candidate; storage never mutates it. The application must have loaded valid
+   state or completed first-run initialization before allowing a mutation.
+2. Create a uniquely named temporary sibling, for example eventhub-<random>.tmp,
+   in the same directory/filesystem. Serialize the complete candidate as UTF-8
+   JSON, close it successfully, then reopen, parse, and fully validate it. Require
+   the reloaded state to equal the candidate before replacement.
+3. Call os.replace(temporary_path, authoritative_path). Successful replacement is
+   the logical commit point. No validation or other fallible required save step
+   follows it. The previous snapshot remains authoritative until this succeeds.
+4. Return success. Main adopts the candidate and then displays success. Any
+   optional cleanup after replacement is best-effort; catch/report cleanup issues
+   separately as warnings, never as ordinary failed saves or reasons to retain
+   the old active state. Do not undo a committed replacement because of cleanup.
+
+| Failure | Authoritative file and active state |
+| --- | --- |
+| Candidate validation fails | Previous file unchanged; candidate discarded; no save |
+| Temporary creation/write/serialization/close/reopen/validation fails | Previous file unchanged (or remains absent on first save); candidate not adopted; clear error |
+| os.replace fails before successful replacement | Previous file unchanged under supported local filesystem semantics; candidate not adopted; clear error |
+| Optional temporary cleanup fails before commit | Preserve original save error and old state; warn about leftover temporary file |
+| Optional cleanup fails after successful replacement | New file committed; adopt candidate and report save success with separate warning |
+| Crash before replacement | Old file remains authoritative, or absent on first save; temporary artifacts may remain |
+| Crash after replacement but before acknowledgement | New state committed, possibly without success message; restart loads the validated authoritative snapshot |
+
+Before-commit errors are ValueError for serialization/validation/encoding problems
+or OSError for filesystem failures. Storage translates expected JSON serialization
+TypeError into a descriptive ValueError; it does not mask unrelated programming
+errors. Main displays clear errors without an uncaught
+traceback and retains active state. An unsuccessful save does not trigger an
+automatic backup restoration. Users may preserve damaged files and repair/restore
+an independently verified copy manually outside normal application startup.
+
+### Limits and simplicity
+
+Use one application process/writer on a local filesystem with normal replacement
+semantics; concurrent writers and external edits during execution are unsupported.
+There is no transaction framework, database, generation metadata, or automatic
+backup system. A successful replacement is not a promise of durability against
+all power failures, device loss, filesystem corruption, or network-filesystem
+behavior. Acknowledgement cannot be guaranteed across a crash after commit.
+No old-snapshot rollback is promised after successful replacement.
+
+### Planned storage tests
+
+Use pytest temporary directories and controlled filesystem failures. Test missing
+first-run file, valid round trip/restart and FIFO retention; duplicate JSON keys
+at root and nested levels; unexpected root/event/booking fields; invalid stored
+records/types/dates/status/identity/references/queues/capacity; malformed JSON,
+invalid encoding, unreadable files and incompatible schema. Test candidate rejection,
+failed temporary creation/write/close/readback validation, failed replacement,
+pre-commit cleanup failure, and post-commit cleanup warning. Assert old file bytes
+and active state unchanged for pre-commit failures (or absence on first save).
+Assert committed candidate adoption despite post-commit cleanup problems. Simulate
+interruption before and after replacement and distinguish commitment from user
+acknowledgement. All these tests are planned, not implemented.
