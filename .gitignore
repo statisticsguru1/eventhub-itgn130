@@ -1,0 +1,26 @@
+# Python-generated files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Local runtime data (proposed persistence location)
+/data/*.json
+/data/*.tmp
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Development tool caches and additional virtual environments
+.ruff_cache/
+.tox/
+.nox/
+.env/
+env/
+ENV/
