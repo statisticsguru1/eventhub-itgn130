@@ -546,7 +546,17 @@ def test_operations_have_no_terminal_io(state, tmp_path, monkeypatch, capsys):
         "search_events_by_date_view",
         "summary_report",
     }
-    assert public == orchestration_api | read_api | {"_event_view"}
+    console_api = {"main", "run_menu"}
+    private_helpers = {
+        "_event_view",
+        "_show_error",
+        "_read_capacity",
+        "_prompt_event_changes",
+        "_display_events",
+        "_display_report",
+        "_search_menu",
+    }
+    assert public == orchestration_api | read_api | console_api | private_helpers
 
 
 VIEW_FIELDS = {

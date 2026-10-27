@@ -1,4 +1,4 @@
-"""Complete candidate-state operations; startup and the console menu come later.
+"""Application operations, read views, startup, and a thin interactive console.
 
 Callers adopt the returned state only after an operation returns successfully.
 Domain and storage errors propagate without changing the caller's input state.
@@ -180,3 +180,235 @@ def summary_report(state: dict) -> dict:
         elif confirmed == max_confirmed and confirmed > 0:
             report["most_registered_events"].append(leader)
     return report
+
+
+def _show_error(error: ValueError | KeyError | OSError) -> None:
+    """Display expected errors without KeyError's extra quotation marks."""
+    message = (
+        error.args[0] if isinstance(error, KeyError) and error.args else str(error)
+    )
+    if isinstance(error, ValueError) and message.startswith(
+        "Generated booking ID already exists: "
+    ):
+        message = "Could not allocate a unique registration ID. Please try again."
+    print(f"Error: {message}")
+
+
+def _read_capacity(prompt: str) -> int:
+    value = input(prompt)
+    try:
+        return int(value)
+    except ValueError as error:
+        raise ValueError("Capacity must be a whole number.") from error
+
+
+def _prompt_event_changes(event: dict) -> dict:
+    """Collect only supplied fields; Enter alone means keep the current value."""
+    print(f"ID: {event['event_id']}")
+    print(f"Title: {event['title']}")
+    print(f"Date: {event['date']} | Venue: {event['venue']}")
+    print(f"Capacity: {event['capacity']} | Status: {event['status']}")
+    changes = {}
+    for field, prompt in [
+        ("title", f"Title [{event['title']}] (Enter to keep): "),
+        ("date", f"Date [{event['date']}] (YYYY-MM-DD; Enter to keep): "),
+        ("venue", f"Venue [{event['venue']}] (Enter to keep): "),
+        ("capacity", f"Capacity [{event['capacity']}] (Enter to keep): "),
+    ]:
+        value = input(prompt)
+        if value == "":
+            continue
+        if field == "capacity":
+            try:
+                value = int(value)
+            except ValueError as error:
+                raise ValueError("Capacity must be a whole number.") from error
+        changes[field] = value
+    return changes
+
+
+def _display_events(records: list[dict]) -> None:
+    if not records:
+        print("No events found.")
+        return
+    for event in records:
+        print(f"\nID: {event['event_id']}")
+        print(f"Title: {event['title']}")
+        print(f"Date: {event['date']} | Venue: {event['venue']}")
+        print(f"Capacity: {event['capacity']} | Status: {event['status']}")
+        print(
+            f"Confirmed: {event['confirmed_count']} | Waiting: {event['waiting_count']}"
+        )
+
+
+def _display_report(report: dict) -> None:
+    print("\nSUMMARY REPORT\n")
+    print(f"Total events: {report['total_events']}")
+    print(f"Active events: {report['active_events']}")
+    print(f"Cancelled events: {report['cancelled_events']}")
+    print(f"Confirmed registrations: {report['confirmed_registrations']}")
+    print(f"Waiting registrations: {report['waiting_registrations']}")
+    print(f"Available seats: {report['available_seats']}")
+    print("\nMost registered event(s):")
+    if not report["most_registered_events"]:
+        print("No confirmed registrations.")
+    for leader in report["most_registered_events"]:
+        print(
+            f"{leader['event_id']} — {leader['title']} — "
+            f"{leader['confirmed_count']} confirmed"
+        )
+
+
+def _search_menu(state: dict) -> None:
+    while True:
+        print("\nSEARCH EVENTS\n\n1. Search by keyword\n2. Search by date\n3. Back")
+        choice = input("Choice: ").strip()
+        if choice == "3":
+            return
+        try:
+            if choice == "1":
+                records = search_events_by_keyword_view(
+                    state, input("Keyword (Enter for all events): ")
+                )
+            elif choice == "2":
+                records = search_events_by_date_view(
+                    state, input("Date (YYYY-MM-DD): ")
+                )
+            else:
+                print("Invalid choice. Please select 1–3.")
+                continue
+        except (ValueError, KeyError, OSError) as error:
+            _show_error(error)
+            continue
+        _display_events(records)
+
+
+def run_menu(state: dict, data_dir: Path) -> None:
+    """Own the active binding; adopt committed state before success display."""
+    while True:
+        print(
+            "\nEVENTHUB — EVENT REGISTRATION & BOOKING MANAGEMENT\n\n"
+            "1. Add event\n2. Edit event\n3. List events\n4. Search events\n"
+            "5. Cancel event\n6. Register participant\n7. Cancel registration\n"
+            "8. View summary report\n9. Exit"
+        )
+        choice = input("Choice: ").strip()
+        if choice == "9":
+            print("Goodbye.")
+            return
+        if choice == "4":
+            _search_menu(state)
+            continue
+        # Expected-error handling covers input/domain/storage work. Success
+        # formatting below is separate so a display error cannot imply save failure.
+        try:
+            if choice == "1":
+                title = input("Title: ")
+                date = input("Date (YYYY-MM-DD): ")
+                venue = input("Venue: ")
+                capacity = _read_capacity("Capacity: ")
+                new_state, result = create_event_operation(
+                    state, data_dir, title, date, venue, capacity
+                )
+                state = new_state
+            elif choice == "2":
+                event_id = input("Event ID: ")
+                event = events.get_event(state, event_id)
+                changes = _prompt_event_changes(event)
+                new_state, result = update_event_operation(
+                    state, data_dir, event_id, changes
+                )
+                state = new_state
+            elif choice == "3":
+                records = list_events_view(state)
+            elif choice == "5":
+                event_id = input("Event ID: ")
+                new_state, result = cancel_event_operation(state, data_dir, event_id)
+                state = new_state
+            elif choice == "6":
+                event_id = input("Event ID: ")
+                student_id = input("Student ID: ")
+                student_name = input("Student name: ")
+                new_state, result = register_participant_operation(
+                    state, data_dir, event_id, student_id, student_name
+                )
+                state = new_state
+            elif choice == "7":
+                event_id = input("Event ID: ")
+                student_id = input("Student ID: ")
+                new_state, result = cancel_registration_operation(
+                    state, data_dir, event_id, student_id
+                )
+                state = new_state
+            elif choice == "8":
+                report = summary_report(state)
+            else:
+                print("Invalid choice. Please select 1–9.")
+                continue
+        except (ValueError, KeyError, OSError) as error:
+            _show_error(error)
+            continue
+
+        if choice == "1":
+            event = result["event"]
+            print(f"Event created: {event['event_id']} — {event['title']}")
+        elif choice == "2":
+            if result["changed"]:
+                print(f"Event updated: {result['event']['event_id']}.")
+            else:
+                print("No changes made.")
+            if result["promoted_booking_ids"]:
+                print(
+                    f"Promoted from waiting list: {len(result['promoted_booking_ids'])}"
+                )
+        elif choice == "3":
+            _display_events(records)
+        elif choice == "5":
+            if result["changed"]:
+                print(
+                    f"Event cancelled. Removed {len(result['removed_booking_ids'])} "
+                    "registration(s)."
+                )
+            else:
+                print("Event is already cancelled. No changes made.")
+        elif choice == "6":
+            booking = result["booking"]
+            label = (
+                "Registration confirmed for"
+                if booking["status"] == "confirmed"
+                else "Added to waiting list:"
+            )
+            print(f"{label} {booking['student_id']} — {booking['student_name']}.")
+        elif choice == "7":
+            booking = result["cancelled_booking"]
+            print(
+                f"Registration cancelled for {booking['student_id']} — "
+                f"{booking['student_name']}."
+            )
+            for promoted in result["promoted_bookings"]:
+                print(
+                    f"Promoted from waiting list: {promoted['student_id']} — "
+                    f"{promoted['student_name']}."
+                )
+        elif choice == "8":
+            _display_report(report)
+
+
+def main() -> None:
+    """Load once, stop on unsafe startup, and terminate closed input gracefully."""
+    try:
+        missing = not (DEFAULT_DATA_DIR / "eventhub.json").exists()
+        state = storage.load_state(DEFAULT_DATA_DIR)
+    except (ValueError, OSError) as error:
+        print(f"Unable to start EventHub: {error}")
+        return
+    if missing:
+        print("No saved data found. Starting with an empty dataset.")
+    try:
+        run_menu(state, DEFAULT_DATA_DIR)
+    except (EOFError, KeyboardInterrupt):
+        print("\nSession ended.")
+
+
+if __name__ == "__main__":
+    main()
