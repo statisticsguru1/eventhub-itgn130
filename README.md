@@ -1,93 +1,130 @@
 # EventHub
 
-ITGN130 Programming in Python group project: a menu-driven event registration and
-booking system. This repository currently contains design documentation, placeholder
-Python modules, and development quality infrastructure. Application features and
-acceptance tests are not implemented. Running python main.py currently does nothing.
+EventHub is a Python console application developed for ITGN130 Programming in
+Python. It supports event creation and management, participant registration,
+capacity enforcement, FIFO waiting lists, automatic promotion, keyword/date
+search, summary reporting, and JSON persistence.
 
-## Authority and design status
+## Requirements and running
 
-The official “ITGN130 Group Project Fall 2026 27 EventHub.docx” was reconciled in
-Milestone 2.1. Mandatory requirements and source references are in
-[requirements](docs/requirements.md). Approved policies through Milestone 2.3 are in
-[business rules](docs/business_rules.md), including the approved single-file
-persistence contract. Documentation approval does not implement application code.
-No final report, slides, sample JSON files, or submission ZIP are produced here.
-
-The document filename suggests Fall 2026–27 but its internal heading says Academic
-Year 2025–26. Verify this and all deadlines with the instructor/Moodle.
-
-## Development setup
-
-Use Python 3.10 or newer from the repository root:
+Python **3.10+** is required. The application uses only the Python standard
+library; no package installation or internet connection is needed to run it.
+Download the project, open a terminal in its directory, and run:
 
 ```sh
-python3 -m venv .venv
-source .venv/bin/activate
+python main.py
+```
+
+On Windows, `py main.py` is an alternative when the Python launcher is installed.
+Runtime data is stored in `data/eventhub.json` beside the source files, regardless
+of the terminal's working directory. A genuine first run starts with an empty
+dataset. The data directory/file is created on a successful mutation; simply
+starting and exiting does not create it. Successful changes are saved immediately.
+Reads and Exit do not save.
+
+If saved data is damaged, invalid, or unsafe to initialize, startup displays an
+error and stops without replacing it. Preserve the file for investigation rather
+than deleting it to bypass the error. Missing authority with abandoned temporary
+snapshots also requires review.
+
+## Menu
+
+1. Add event
+2. Edit event
+3. List events
+4. Search events
+5. Cancel event
+6. Register participant
+7. Cancel registration
+8. View summary report
+9. Exit
+
+Search opens a submenu: **1. Search by keyword**, **2. Search by date**,
+**3. Back**. Keyword search matches title or venue, ignores case, and accepts a
+blank query for all events. Date search matches an exact `YYYY-MM-DD` date.
+List/search show event ID, title, date, venue, capacity, status, confirmed count,
+and waiting count. Internal booking IDs are not displayed.
+
+## Important rules
+
+- Events receive generated unique IDs. Use the displayed event ID in later actions.
+- Dates must be real calendar dates in `YYYY-MM-DD`; past dates are permitted.
+- Capacity must be a positive whole number. It cannot fall below confirmed attendance.
+- Student IDs are text: leading zeros and case are preserved. Surrounding whitespace
+  is trimmed from student IDs/names and event titles/venues. ID comparison is case-sensitive.
+- A student cannot register twice for the same event, including while waiting,
+  but may register for different events. Re-registration after cancellation is allowed.
+- Additional participants join a FIFO waiting list when an event is full.
+- Cancelling a confirmed registration promotes the first waiter; cancelling a
+  waiting registration does not promote anyone. Increasing capacity promotes as
+  many FIFO waiters as the new seats permit.
+- Cancelled events remain visible, cannot be edited or accept registrations, and
+  cannot be reactivated. Event cancellation removes its registrations and queue.
+- In Edit, Enter alone keeps a field; an entirely blank edit is a validated no-op.
+
+The report includes total, active, and cancelled events; confirmed and waiting
+registrations; available seats; and most-registered event(s). Registration totals
+and available seats concern active events only. Seats equal capacity minus
+confirmed registrations. All positive confirmed-count ties are shown; there is
+no leader when nobody is confirmed. These include the assignment-required metrics.
+
+## Project structure
+
+| Location | Responsibility |
+| --- | --- |
+| `main.py` | Application orchestration, read/report composition, console UI, startup |
+| `events.py` | Event validation and event-domain operations |
+| `bookings.py` | Registration, cancellation, waiting lists, promotion |
+| `storage.py` | JSON loading, complete-state validation, atomic saving |
+| `tests/` | Domain, storage, application, console, and integration tests |
+| `docs/` | Final architecture, requirements, schema, rules, submission checklist |
+| `samples/eventhub.json` | Fictional sample snapshot; never automatically loaded |
+
+## Sample data and a short demonstration
+
+The sample contains three fictional events: an active capacity-three workshop
+with one confirmed participant; a full capacity-one workshop with one confirmed
+participant and two FIFO waiters; and a retained cancelled event without bookings.
+All participant names and student IDs are invented demonstration values.
+
+To use it, close EventHub first. If `data/eventhub.json` contains needed data,
+**back it up or move it to a safe location before proceeding**. Create the `data`
+folder if necessary, then copy `samples/eventhub.json` into that folder, retaining
+its filename `eventhub.json`. A file manager works on Windows, macOS, or Linux.
+Do not overwrite existing data blindly. The application continues to load only
+`data/eventhub.json`; it never loads `samples/` automatically.
+
+Run EventHub, use List and Report, then cancel `STU002` from the full workshop
+(use its listed event ID). `STU003` is promoted before `STU004`. Exit and restart
+to observe the saved result. To demonstrate normal registration, add fictional
+`STU005 / Ellis Demo` to the capacity-three workshop. Work on the runtime copy;
+the supplied sample remains a reusable starting point.
+
+## Development and verification
+
+Optional development tools are installed separately from runtime requirements:
+
+```sh
+python -m venv .venv
+# Activate .venv using your platform's virtual-environment instructions.
 python -m pip install -r requirements-dev.txt
+pytest
+ruff check .
+ruff format --check .
 ```
 
-On Windows, activate with .venv\Scripts\activate instead. Application runtime
-will use the standard library; pytest and Ruff are development tools, not required
-application libraries. No framework, database, or GUI is planned.
+Finalization verification: **579 tests passed under Python 3.12.14**, Ruff lint and
+formatting checks passed. Python 3.10 syntax compatibility was checked separately;
+this is not a claim of local Python 3.10 runtime execution. CI is configured for
+Python 3.10. The application supports one local writer; concurrent writers and
+power-loss durability are outside its guarantees.
 
-Run the existing development checks from the repository root:
+## Submission status
 
-```sh
-python -m ruff check .
-python -m ruff format --check .
-python -m pytest
-```
-
-CI uses Python 3.10 and these commands. Ruff targets Python 3.10, 88-character
-formatting, and E4/E7/E9/F rules. tests/test_imports.py contains four parameterized
-module import/path checks only. Business and integration tests in the requirements
-mapping are PLANNED. No test results are claimed by this documentation revision.
-
-## Approved intended behavior
-
-- Events have unique ID, title, date, venue, positive capacity, active/cancelled
-  status, and FIFO queue. Cancellation retains the event and removes its bookings;
-  editing cancelled events, reactivation, and permanent deletion are prohibited
-  in the initial scope by approved project policy.
-- Register with trimmed case-sensitive student ID and name; preserve leading
-  zeros. Prevent same-event duplicates across confirmed and waiting registrations.
-- Enforce capacity; promote FIFO after confirmed cancellation or capacity increase;
-  reject reductions below confirmed attendance and never demote.
-- Validate exact YYYY-MM-DD dates, including calendar validity; permit past dates.
-- Search title/venue keywords or exact dates; display status and confirmed/waiting
-  counts, including cancelled events, ordered by date then event ID.
-- Report retained events, active confirmed registrations and available seats, and
-  all tied leaders by confirmed registrations; also show waiting and status totals.
-
-## Layout and persistence plan
-
-- main.py: repeating menu, input/output, orchestration and errors.
-- events.py: event creation, validation, updates, cancellation and searches.
-- bookings.py: student registration, capacity/FIFO, cancellation, promotion, reports.
-- storage.py: JSON validation, load/save, and controlled storage errors.
-- [Architecture](docs/architecture.md): planned public contracts and mutation ownership.
-- [Data model](docs/data_model.md): fields, invariants, and the authoritative JSON snapshot.
-- [Submission checklist](docs/submission_checklist.md): delivery/evidence requirements.
-- pyproject.toml and .github/workflows/ci.yml: existing pytest/Ruff and CI settings.
-
-The authoritative runtime file is data/eventhub.json, relative to the application
-root. It contains schema_version, events, and bookings; waiting-list order stays
-inside each event. Missing file on first run initializes empty state; malformed,
-unreadable, or incompatible data produces a controlled error without overwriting.
-Leftover temporary artifacts require review if the authoritative file is absent.
-
-Save validates the candidate and a temporary sibling readback before os.replace.
-Successful replacement commits; only then is candidate adopted. Pre-commit failure
-keeps the previous file unchanged. Post-commit cleanup errors are separate warnings,
-not failed saves. A crash after replacement can commit without a success message.
-No automatic backup system is required, and universal power-failure durability is
-not promised. The application assumes one writer on a local filesystem.
-
-Runtime data paths are ignored; original nonsensitive sample eventhub.json must
-later be included explicitly in the submission. The assignment's suggested starter
-file layout is not exclusive; Milestone 2.3 approves the single authoritative file.
-
-Final application run instructions and clean-computer validation must be completed
-when the application exists. Follow the submission checklist; current import tests
-are not evidence of assignment completion.
+Application implementation and automated tests are complete. The final PDF,
+PPTX, screenshot evidence, truthful group contribution record, rehearsal, ZIP,
+and Moodle submission remain separate deliverables; see
+[the submission checklist](docs/submission_checklist.md).
+The assignment filename references Fall 2026/27, while its internal heading says
+Academic Year 2025–26. The deadline is on Moodle; confirm the year and schedule
+with Moodle/the instructor rather than inferring a date.

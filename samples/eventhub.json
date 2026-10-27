@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "events": {
+    "10000000-0000-4000-8000-000000000001": {
+      "event_id": "10000000-0000-4000-8000-000000000001",
+      "title": "Demo Python Workshop",
+      "date": "2026-11-20",
+      "venue": "Demo Room 1",
+      "capacity": 3,
+      "status": "active",
+      "waiting_list": []
+    },
+    "10000000-0000-4000-8000-000000000002": {
+      "event_id": "10000000-0000-4000-8000-000000000002",
+      "title": "Demo FIFO Workshop",
+      "date": "2026-11-21",
+      "venue": "Demo Room 2",
+      "capacity": 1,
+      "status": "active",
+      "waiting_list": [
+        "20000000-0000-4000-8000-000000000003",
+        "20000000-0000-4000-8000-000000000004"
+      ]
+    },
+    "10000000-0000-4000-8000-000000000003": {
+      "event_id": "10000000-0000-4000-8000-000000000003",
+      "title": "Demo Cancelled Seminar",
+      "date": "2026-11-22",
+      "venue": "Demo Room 3",
+      "capacity": 2,
+      "status": "cancelled",
+      "waiting_list": []
+    }
+  },
+  "bookings": {
+    "20000000-0000-4000-8000-000000000001": {
+      "booking_id": "20000000-0000-4000-8000-000000000001",
+      "event_id": "10000000-0000-4000-8000-000000000001",
+      "student_id": "STU001",
+      "student_name": "Alex Demo",
+      "status": "confirmed"
+    },
+    "20000000-0000-4000-8000-000000000002": {
+      "booking_id": "20000000-0000-4000-8000-000000000002",
+      "event_id": "10000000-0000-4000-8000-000000000002",
+      "student_id": "STU002",
+      "student_name": "Bailey Demo",
+      "status": "confirmed"
+    },
+    "20000000-0000-4000-8000-000000000003": {
+      "booking_id": "20000000-0000-4000-8000-000000000003",
+      "event_id": "10000000-0000-4000-8000-000000000002",
+      "student_id": "STU003",
+      "student_name": "Casey Demo",
+      "status": "waiting"
+    },
+    "20000000-0000-4000-8000-000000000004": {
+      "booking_id": "20000000-0000-4000-8000-000000000004",
+      "event_id": "10000000-0000-4000-8000-000000000002",
+      "student_id": "STU004",
+      "student_name": "Drew Demo",
+      "status": "waiting"
+    }
+  }
+}
