@@ -1,115 +1,125 @@
-# EventHub data model
+# Implemented data model
 
-## Authority and implementation status
+The runtime authority is `data/eventhub.json`, a single UTF-8 JSON snapshot.
+`samples/eventhub.json` has the same schema but is never automatically loaded.
+There are no separate authoritative event/booking files, persisted counters,
+participant registry, audit history, or cancelled-booking records.
 
-The assignment mandates event ID, title, date, venue, capacity, status; student ID
-and name; capacity/FIFO behavior; and JSON persistence. The dictionary layout and
-policies below are approved project decisions, not a prescribed assignment schema.
-These structures are documentation only. No application behavior is implemented.
-The single-file persistence contract in business_rules.md is approved in
-Milestone 2.3. The in-memory state and persisted snapshot use the same structure.
-
-## In-memory state
-
-Use plain dictionaries/lists, functions, and Python 3.10+. No classes or separate
-student registry are needed. State has schema_version: 1, events keyed by event ID,
-and bookings keyed by booking ID. Generate unique string IDs with uuid.uuid4;
-check for collisions before inserting. IDs persist unchanged.
-
-| Record | Fields |
-| --- | --- |
-| Event | event_id: unique string; title: nonempty string; date: canonical YYYY-MM-DD; venue: nonempty string; capacity: positive integer; status: active or cancelled; waiting_list: ordered list of booking IDs |
-| Registration | booking_id: unique string; event_id: event reference; student_id: nonempty trimmed string; student_name: nonempty string; status: confirmed or waiting |
-
-Student IDs are case-sensitive after trimming; retain leading zeros and impose no
-invented length restriction. Student names are display attributes, not unique
-keys. Trim title, venue, and student_name and reject empty results. A student may
-register for different events and again after registration cancellation.
-
-## Illustrative state (synthetic only)
+## Exact root structure
 
 ```json
 {
   "schema_version": 1,
-  "events": {
-    "event-a": {
-      "event_id": "event-a",
-      "title": "Python Workshop",
-      "date": "2026-11-20",
-      "venue": "Room 101",
-      "capacity": 1,
-      "status": "active",
-      "waiting_list": ["booking-b"]
-    }
-  },
-  "bookings": {
-    "booking-a": {
-      "booking_id": "booking-a",
-      "event_id": "event-a",
-      "student_id": "001",
-      "student_name": "Sample Student A",
-      "status": "confirmed"
-    },
-    "booking-b": {
-      "booking_id": "booking-b",
-      "event_id": "event-a",
-      "student_id": "002",
-      "student_name": "Sample Student B",
-      "status": "waiting"
-    }
-  }
+  "events": {},
+  "bookings": {}
 }
 ```
 
-## Invariants
+All three keys are required and extra keys are rejected. `schema_version` must be
+integer 1 (not boolean); events and bookings are dictionaries keyed by their IDs.
+Duplicate JSON object keys are rejected at every object level.
 
-- Dictionary keys equal embedded IDs; all IDs are nonempty strings.
-- Every booking references an existing active event. Cancelled events are retained
-  but have no bookings and an empty waiting_list.
-- Capacity is an integer greater than zero; reject bool explicitly. Confirmed
-  count never exceeds capacity. schema_version must also be an exact integer.
-- An (event_id, trimmed case-sensitive student_id) occurs once across both statuses.
-- Status values are restricted to their documented enumerations.
-- Every waiting booking occurs exactly once in its own event queue. No confirmed
-  booking occurs in a queue; queue entries cannot reference another event.
-- After a successful operation, an active event cannot have waiting students and
-  unfilled seats simultaneously. Queue order is authoritative FIFO order.
-- Validate exact date format and a real calendar date; past dates are permitted.
-- On load, reject malformed types, missing fields, duplicate JSON object keys,
-  unsupported schema versions, broken references, and violated invariants. Do not
-  silently repair or discard records. Reject unexpected record fields for schema 1.
-- Returned read records must not expose nested mutable lists from active state.
+## Event record — exactly seven fields
 
-## Derived views
+| Field | Type / contract |
+| --- | --- |
+| `event_id` | Nonempty string equal to its event dictionary key |
+| `title` | Trimmed nonempty string |
+| `date` | Canonical ASCII `YYYY-MM-DD`, real calendar date; past dates permitted |
+| `venue` | Trimmed nonempty string |
+| `capacity` | Positive integer, excluding boolean |
+| `status` | `active` or `cancelled` |
+| `waiting_list` | Ordered list of unique nonempty booking-ID strings; sole persisted FIFO representation |
 
-Search rows include event_id, title, date, venue, capacity, status, confirmed_count,
-and waiting_count; sort by (date, event_id). Counts are derived from bookings and
-must agree with queue membership.
+Application creation generates IDs with `str(uuid.uuid4())` and rejects collisions.
+Validation requires nonempty matching IDs, not UUID syntax. Event IDs are looked
+up exactly. Cancelled events are retained and cannot be edited/reactivated.
 
-Report shape: totals with retained_events, active_events, cancelled_events,
-confirmed_registrations, waiting_registrations, available_seats; plus leaders, a
-list of event_id/title/confirmed_count rows ordered by (date, event_id). Leaders
-are active events tied at the largest positive confirmed count; otherwise leaders
-is empty and main displays “No confirmed registrations”. Available seats sum
-capacity minus confirmed count for active events only. Cancelled events contribute
-zero seats and registrations. No derived counters are persisted.
+## Booking record — exactly five fields
 
-## Approved persistence representation
+| Field | Type / contract |
+| --- | --- |
+| `booking_id` | Nonempty string equal to its booking dictionary key; generated UUID string on registration |
+| `event_id` | Existing active event ID |
+| `student_id` | Trimmed nonempty string, preserving case and leading zeros |
+| `student_name` | Trimmed nonempty string |
+| `status` | `confirmed` or `waiting` |
 
-The sole authoritative snapshot is data/eventhub.json, resolved relative to the
-application root rather than the caller's working directory. Its root has exactly
-schema_version (integer 1), events (dictionary), and bookings (dictionary), as in
-the illustrative state above. Each event stores its ordered waiting_list of booking
-IDs. No separate persisted counters or storage metadata are required.
+Student identity is unique per `(event_id, student_id)` across both statuses,
+not globally unique. No integer conversion or case folding is applied. Cancellation
+removes the booking record; re-registration creates a new booking.
 
-Use a unique temporary sibling ending in .tmp and os.replace as the logical commit
-point. Validate the candidate and the serialized readback before replacement;
-adopt candidate only after replacement succeeds. See business_rules.md for precise
-failure, startup, cleanup, and crash behavior. Corrupt or incompatible snapshots
-are preserved and never silently replaced with empty data.
+## Completed-state invariants
 
-The existing ignore rules cover runtime data/*.json and data/*.tmp. Future original
-nonsensitive sample eventhub.json must be included explicitly in a tracked sample
-location, with instructions for copying it into the runtime directory. No sample
-files are created in this milestone. The assignment's two sample filenames are
-starter guidance; the approved design stores all state in one authoritative file.
+- Every booking references an existing active event.
+- Every waiting booking appears exactly once in its own event's queue.
+- Every queue entry references a waiting booking of that event; confirmed bookings
+  never appear in a queue. Dictionary insertion order is not FIFO order.
+- Confirmed count never exceeds capacity. An active event cannot retain waiters
+  while seats are available.
+- A cancelled event has no bookings and an empty waiting list.
+- Capacity increase and event cancellation intermediates are completed by main
+  orchestration before saving; storage rejects incomplete snapshots.
+
+`storage.validate_state()` checks these relationships without changing state.
+Counts are computed from bookings, never stored in event records.
+
+## Derived list/search record — exactly eight fields
+
+```text
+event_id: str
+title: str
+date: str
+venue: str
+capacity: int
+status: str
+confirmed_count: int
+waiting_count: int
+```
+
+`main.list_events_view`, `search_events_by_keyword_view`, and
+`search_events_by_date_view` return fresh dictionaries in date/event-ID order.
+The raw `waiting_list` and booking IDs are omitted. Cancelled events remain visible
+with naturally zero counts in completed valid state.
+
+## Derived summary report — exact keys
+
+```text
+{
+    "total_events": int,
+    "active_events": int,
+    "cancelled_events": int,
+    "confirmed_registrations": int,
+    "waiting_registrations": int,
+    "available_seats": int,
+    "most_registered_events": [
+        {"event_id": str, "title": str, "confirmed_count": int}
+    ]
+}
+```
+
+`main.summary_report()` counts all retained events for `total_events` and the
+corresponding statuses for the breakdown. Only active events contribute confirmed
+and waiting registration totals, available seats, and leaders. Registrations are
+counted, not unique people. Available seats sum `capacity - confirmed_count`;
+waiting registrations are not subtracted. Leaders include all events tied at the
+positive maximum confirmed count, ordered by date then event ID. No positive
+confirmed count means an empty leader list. No events means all numeric values
+zero and an empty leader list. All derived values are read-only and never persisted.
+
+## Sample snapshot
+
+The fictional sample uses three UUID-style event IDs and four booking IDs:
+a capacity-three active workshop with one confirmed booking; a full capacity-one
+active workshop with one confirmed booking and two ordered waiters; and a retained
+cancelled event with no bookings. Its report is total 3, active 2, cancelled 1,
+confirmed 2, waiting 2, available seats 2, with both active events tied at one.
+
+## Persistence and safety
+
+A successful mutation saves the entire completed snapshot using a validated sibling
+temporary file and `os.replace`. Startup loads only the authoritative filename.
+Genuine first run may return empty state without writing. Invalid data is rejected,
+not repaired or replaced. Missing authority plus abandoned temporary snapshots
+requires review. See [architecture.md](architecture.md) for commit semantics and
+single-writer/power-loss limitations.

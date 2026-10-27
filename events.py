@@ -1,6 +1,6 @@
 """Event-only validation, candidate mutations, and independent read snapshots.
 
-No function persists state or changes bookings. Later main orchestration must
+No function persists state or changes bookings. Application orchestration must
 complete promotion/cleanup before validating and saving cross-module operations.
 """
 
@@ -150,7 +150,7 @@ def update_event(
 
 
 def cancel_event(candidate: dict, event_id: str) -> bool:
-    """Change status only; main/bookings must later complete booking cleanup."""
+    """Change status only; orchestration completes booking cleanup before saving."""
     event = _event_reference(candidate, event_id)
     if event["status"] == "cancelled":
         return False
