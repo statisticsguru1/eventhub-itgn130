@@ -112,3 +112,71 @@ def cancel_registration_operation(
     result = {"cancelled_booking": cancelled, "promoted_bookings": promoted}
     storage.save_state(candidate, data_dir)
     return candidate, result
+
+
+def _event_view(state: dict, event: dict) -> dict:
+    """Build a fresh display record without exposing the internal waiting queue."""
+    counts = bookings.event_counts(state, event["event_id"])
+    return {
+        "event_id": event["event_id"],
+        "title": event["title"],
+        "date": event["date"],
+        "venue": event["venue"],
+        "capacity": event["capacity"],
+        "status": event["status"],
+        "confirmed_count": counts["confirmed_count"],
+        "waiting_count": counts["waiting_count"],
+    }
+
+
+def list_events_view(state: dict) -> list[dict]:
+    """Return ordered display records from a completed valid application state."""
+    return [_event_view(state, event) for event in events.list_events(state)]
+
+
+def search_events_by_keyword_view(state: dict, query: str) -> list[dict]:
+    """Enrich domain keyword matches without changing their matching or order."""
+    return [
+        _event_view(state, event) for event in events.search_by_keyword(state, query)
+    ]
+
+
+def search_events_by_date_view(state: dict, date: str) -> list[dict]:
+    """Enrich domain date matches, propagating domain validation errors."""
+    return [_event_view(state, event) for event in events.search_by_date(state, date)]
+
+
+def summary_report(state: dict) -> dict:
+    """Derive totals and positive active leaders from completed valid state."""
+    ordered_events = events.list_events(state)
+    report = {
+        "total_events": len(ordered_events),
+        "active_events": 0,
+        "cancelled_events": 0,
+        "confirmed_registrations": 0,
+        "waiting_registrations": 0,
+        "available_seats": 0,
+        "most_registered_events": [],
+    }
+    max_confirmed = 0
+    for event in ordered_events:
+        if event["status"] == "cancelled":
+            report["cancelled_events"] += 1
+            continue
+        report["active_events"] += 1
+        counts = bookings.event_counts(state, event["event_id"])
+        confirmed = counts["confirmed_count"]
+        report["confirmed_registrations"] += confirmed
+        report["waiting_registrations"] += counts["waiting_count"]
+        report["available_seats"] += event["capacity"] - confirmed
+        leader = {
+            "event_id": event["event_id"],
+            "title": event["title"],
+            "confirmed_count": confirmed,
+        }
+        if confirmed > max_confirmed:
+            max_confirmed = confirmed
+            report["most_registered_events"] = [leader]
+        elif confirmed == max_confirmed and confirmed > 0:
+            report["most_registered_events"].append(leader)
+    return report

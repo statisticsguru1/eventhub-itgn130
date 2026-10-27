@@ -539,4 +539,388 @@ def test_operations_have_no_terminal_io(state, tmp_path, monkeypatch, capsys):
     assert capsys.readouterr() == ("", "")
     tree = ast.parse(Path(main.__file__).read_text())
     public = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
-    assert public == {name for name, _ in OPERATIONS}
+    orchestration_api = {name for name, _ in OPERATIONS}
+    read_api = {
+        "list_events_view",
+        "search_events_by_keyword_view",
+        "search_events_by_date_view",
+        "summary_report",
+    }
+    assert public == orchestration_api | read_api | {"_event_view"}
+
+
+VIEW_FIELDS = {
+    "event_id",
+    "title",
+    "date",
+    "venue",
+    "capacity",
+    "status",
+    "confirmed_count",
+    "waiting_count",
+}
+READ_CALLS = [
+    ("list_events_view", ()),
+    ("search_events_by_keyword_view", ("",)),
+    ("search_events_by_date_view", ("2024-02-29",)),
+    ("summary_report", ()),
+]
+
+
+def test_list_view_exact_fields_counts_order_and_independence(state):
+    state["events"]["open"]["date"] = "2000-01-01"
+    storage.validate_state(state)
+    before = deepcopy(state)
+    rows = main.list_events_view(state)
+    assert [row["event_id"] for row in rows] == ["open", "closed", "full"]
+    for row in rows:
+        assert set(row) == VIEW_FIELDS
+        event_id = row["event_id"]
+        assert {
+            key: row[key] for key in VIEW_FIELDS - {"confirmed_count", "waiting_count"}
+        } == {
+            key: before["events"][event_id][key]
+            for key in VIEW_FIELDS - {"confirmed_count", "waiting_count"}
+        }
+    assert [(row["confirmed_count"], row["waiting_count"]) for row in rows] == [
+        (1, 0),
+        (0, 0),
+        (2, 3),
+    ]
+    expected = deepcopy(rows)
+    rows[0]["title"] = "Changed"
+    rows[2]["waiting_count"] = 99
+    rows.clear()
+    assert main.list_events_view(state) == expected
+    assert state == before
+
+
+def test_empty_and_single_event_views():
+    state = storage.empty_state()
+    assert main.list_events_view(state) == []
+    assert main.search_events_by_keyword_view(state, "") == []
+    assert main.search_events_by_date_view(state, "2024-02-29") == []
+    event = events.create_event(state, "Sample", "2000-01-01", "Room", 2)
+    storage.validate_state(state)
+    assert main.list_events_view(state) == [
+        {
+            "event_id": event["event_id"],
+            "title": "Sample",
+            "date": "2000-01-01",
+            "venue": "Room",
+            "capacity": 2,
+            "status": "active",
+            "confirmed_count": 0,
+            "waiting_count": 0,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "query,expected_ids",
+    [
+        ("Workshop", ["full"]),
+        ("Annex", ["open"]),
+        (" wOrKsHoP ", ["full"]),
+        ("Room", ["closed", "full"]),
+        ("", ["closed", "full", "open"]),
+        (" \t ", ["closed", "full", "open"]),
+        ("not-found", []),
+        ("Closed", ["closed"]),
+    ],
+)
+def test_keyword_views_reuse_matching_and_enrich_counts(state, query, expected_ids):
+    state["events"]["full"]["title"] = "Workshop Room"
+    state["events"]["open"]["venue"] = "Annex"
+    state["events"]["closed"]["title"] = "Closed Event"
+    storage.validate_state(state)
+    before = deepcopy(state)
+    rows = main.search_events_by_keyword_view(state, query)
+    assert [row["event_id"] for row in rows] == expected_ids
+    expected_counts = {"closed": (0, 0), "full": (2, 3), "open": (1, 0)}
+    for row in rows:
+        assert set(row) == VIEW_FIELDS
+        assert (row["confirmed_count"], row["waiting_count"]) == expected_counts[
+            row["event_id"]
+        ]
+    assert state == before
+
+
+@pytest.mark.parametrize("query", [None, 1, [], {}])
+def test_keyword_view_invalid_types_propagate_without_mutation(state, query):
+    before = deepcopy(state)
+    with pytest.raises(ValueError):
+        main.search_events_by_keyword_view(state, query)
+    assert state == before
+
+
+@pytest.mark.parametrize(
+    "date,expected_ids",
+    [
+        ("2024-02-29", ["closed", "full"]),
+        ("2000-01-01", ["open"]),
+        ("1999-01-01", []),
+    ],
+)
+def test_date_views_preserve_exact_matching_and_order(state, date, expected_ids):
+    state["events"]["open"]["date"] = "2000-01-01"
+    storage.validate_state(state)
+    before = deepcopy(state)
+    rows = main.search_events_by_date_view(state, date)
+    assert [row["event_id"] for row in rows] == expected_ids
+    expected_counts = {"closed": (0, 0), "full": (2, 3), "open": (1, 0)}
+    for row in rows:
+        assert set(row) == VIEW_FIELDS
+        assert (row["confirmed_count"], row["waiting_count"]) == expected_counts[
+            row["event_id"]
+        ]
+    assert state == before
+
+
+@pytest.mark.parametrize("date", ["", " ", "2024-2-29", "2023-02-29", None, 1])
+def test_date_view_propagates_validation_errors(state, date):
+    before = deepcopy(state)
+    with pytest.raises(ValueError):
+        main.search_events_by_date_view(state, date)
+    assert state == before
+
+
+@pytest.mark.parametrize("function,args", READ_CALLS[:3])
+def test_each_view_result_is_independent(state, function, args):
+    before = deepcopy(state)
+    rows = getattr(main, function)(state, *args)
+    expected = deepcopy(rows)
+    rows[0]["title"] = "Changed"
+    rows[0]["confirmed_count"] = 100
+    rows.append({"unexpected": True})
+    assert state == before
+    assert getattr(main, function)(state, *args) == expected
+
+
+@pytest.mark.parametrize(
+    "reader,view,args",
+    [
+        ("list_events", "list_events_view", ()),
+        ("search_by_keyword", "search_events_by_keyword_view", ("arbitrary",)),
+        ("search_by_date", "search_events_by_date_view", ("delegated-date",)),
+    ],
+)
+def test_views_delegate_to_domain_reader_and_enrich_only_matches(
+    state, monkeypatch, reader, view, args
+):
+    # Deliberately nonstandard selection/order proves the wrapper does not refilter.
+    selected = [events.get_event(state, "open"), events.get_event(state, "full")]
+    before = deepcopy(selected)
+    domain = Mock(return_value=selected)
+    count = Mock(wraps=bookings.event_counts)
+    monkeypatch.setattr(events, reader, domain)
+    monkeypatch.setattr(bookings, "event_counts", count)
+    rows = getattr(main, view)(state, *args)
+    domain.assert_called_once_with(state, *args)
+    assert [row["event_id"] for row in rows] == ["open", "full"]
+    assert [call.args for call in count.call_args_list] == [
+        (state, "open"),
+        (state, "full"),
+    ]
+    assert selected == before
+    rows[0]["title"] = "Changed"
+    assert selected == before
+
+
+def test_summary_mixed_state_exact_shape_and_totals(state):
+    before = deepcopy(state)
+    assert main.summary_report(state) == {
+        "total_events": 3,
+        "active_events": 2,
+        "cancelled_events": 1,
+        "confirmed_registrations": 3,
+        "waiting_registrations": 3,
+        # Full event contributes zero, open contributes 4 - 1, cancelled zero.
+        "available_seats": 3,
+        "most_registered_events": [
+            {
+                "event_id": "full",
+                "title": "Sample Event",
+                "confirmed_count": 2,
+            }
+        ],
+    }
+    # Student 001's confirmed registrations at two events both contribute.
+    assert (
+        state["bookings"]["c1"]["student_id"]
+        == state["bookings"]["other"]["student_id"]
+    )
+    assert state == before
+
+
+@pytest.mark.parametrize("kind", ["empty", "cancelled-only", "active-zero"])
+def test_summary_empty_and_zero_cases(state, kind):
+    if kind == "empty":
+        state = storage.empty_state()
+        total, active, cancelled, seats = 0, 0, 0, 0
+    elif kind == "cancelled-only":
+        state["events"] = {"closed": state["events"]["closed"]}
+        state["bookings"] = {}
+        total, active, cancelled, seats = 1, 0, 1, 0
+    else:
+        state["bookings"] = {}
+        state["events"]["full"]["waiting_list"] = []
+        total, active, cancelled, seats = 3, 2, 1, 6
+    storage.validate_state(state)
+    before = deepcopy(state)
+    assert main.summary_report(state) == {
+        "total_events": total,
+        "active_events": active,
+        "cancelled_events": cancelled,
+        "confirmed_registrations": 0,
+        "waiting_registrations": 0,
+        "available_seats": seats,
+        "most_registered_events": [],
+    }
+    assert state == before
+
+
+def test_summary_positive_ties_use_date_then_id_not_insertion_order(state):
+    # Both existing active events have two confirmed registrations.
+    bookings.register_participant(state, "open", "006", "Sample Six")
+    state["events"]["open"]["date"] = "2000-01-01"
+    state["events"]["early"] = {
+        **state["events"]["open"],
+        "event_id": "early",
+        "waiting_list": [],
+    }
+    for student in ["007", "008"]:
+        bookings.register_participant(state, "early", student, "Sample")
+    # An earlier zero-count event must never become a leader.
+    state["events"]["zero"] = {
+        **state["events"]["open"],
+        "event_id": "zero",
+        "date": "1990-01-01",
+        "waiting_list": [],
+    }
+    storage.validate_state(state)
+    before = deepcopy(state)
+    report = main.summary_report(state)
+    assert report["most_registered_events"] == [
+        {"event_id": key, "title": "Sample Event", "confirmed_count": 2}
+        for key in ["early", "open", "full"]
+    ]
+    assert report["confirmed_registrations"] == 6
+    assert report["available_seats"] == 8
+    assert state == before
+    expected = deepcopy(report)
+    report["most_registered_events"][0]["title"] = "Changed"
+    report["most_registered_events"].clear()
+    report["confirmed_registrations"] = 999
+    assert state == before
+    assert main.summary_report(state) == expected
+
+
+def test_summary_later_larger_count_replaces_earlier_leader(state):
+    bookings.register_participant(state, "open", "006", "Sample Six")
+    bookings.register_participant(state, "open", "007", "Sample Seven")
+    storage.validate_state(state)
+    assert main.summary_report(state)["most_registered_events"] == [
+        {
+            "event_id": "open",
+            "title": "Sample Event",
+            "confirmed_count": 3,
+        }
+    ]
+
+
+def test_summary_counts_each_active_event_once_and_skips_cancelled(state, monkeypatch):
+    counts = Mock(wraps=bookings.event_counts)
+    listing = Mock(wraps=events.list_events)
+    monkeypatch.setattr(bookings, "event_counts", counts)
+    monkeypatch.setattr(events, "list_events", listing)
+    main.summary_report(state)
+    listing.assert_called_once_with(state)
+    assert [call.args for call in counts.call_args_list] == [
+        (state, "full"),
+        (state, "open"),
+    ]
+
+
+def test_capacity_orchestration_then_views_and_report(state, tmp_path):
+    returned, _ = main.update_event_operation(state, tmp_path, "full", {"capacity": 4})
+    assert storage.load_state(tmp_path) == returned
+    storage.validate_state(returned)
+    for rows in [
+        main.list_events_view(returned),
+        main.search_events_by_keyword_view(returned, "Sample"),
+        main.search_events_by_date_view(returned, "2024-02-29"),
+    ]:
+        full = next(row for row in rows if row["event_id"] == "full")
+        assert full["confirmed_count"] == 4
+        assert full["waiting_count"] == 1
+    assert returned["events"]["full"]["waiting_list"] == ["w3"]
+    assert main.summary_report(returned) == {
+        "total_events": 3,
+        "active_events": 2,
+        "cancelled_events": 1,
+        "confirmed_registrations": 5,
+        "waiting_registrations": 1,
+        "available_seats": 3,
+        "most_registered_events": [
+            {
+                "event_id": "full",
+                "title": "Sample Event",
+                "confirmed_count": 4,
+            }
+        ],
+    }
+
+
+def test_event_cancellation_then_views_and_report(state, tmp_path):
+    returned, _ = main.cancel_event_operation(state, tmp_path, "full")
+    assert storage.load_state(tmp_path) == returned
+    storage.validate_state(returned)
+    for rows in [
+        main.list_events_view(returned),
+        main.search_events_by_keyword_view(returned, "Sample"),
+        main.search_events_by_date_view(returned, "2024-02-29"),
+    ]:
+        full = next(row for row in rows if row["event_id"] == "full")
+        assert full["status"] == "cancelled"
+        assert full["confirmed_count"] == full["waiting_count"] == 0
+    assert main.summary_report(returned) == {
+        "total_events": 3,
+        "active_events": 1,
+        "cancelled_events": 2,
+        "confirmed_registrations": 1,
+        "waiting_registrations": 0,
+        "available_seats": 3,
+        "most_registered_events": [
+            {
+                "event_id": "open",
+                "title": "Sample Event",
+                "confirmed_count": 1,
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize("function,args", READ_CALLS)
+def test_reads_do_not_mutate_persist_validate_or_interact(
+    state, tmp_path, monkeypatch, capsys, function, args
+):
+    storage.save_state(state, tmp_path)
+    path = tmp_path / "eventhub.json"
+    raw = path.read_bytes()
+    before = deepcopy(state)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(storage, "save_state", Mock(side_effect=AssertionError("save")))
+    monkeypatch.setattr(storage, "load_state", Mock(side_effect=AssertionError("load")))
+    monkeypatch.setattr(
+        storage, "validate_state", Mock(side_effect=AssertionError("validate"))
+    )
+    monkeypatch.setattr(
+        main, "deepcopy", Mock(side_effect=AssertionError("whole-state copy"))
+    )
+    monkeypatch.setattr("builtins.input", Mock(side_effect=AssertionError("input")))
+    getattr(main, function)(state, *args)
+    assert state == before
+    assert path.read_bytes() == raw
+    assert list(tmp_path.iterdir()) == [path]
+    assert capsys.readouterr() == ("", "")
